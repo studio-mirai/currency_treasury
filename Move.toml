@@ -1,0 +1,10 @@
+[package]
+name = "currency_treasury"
+edition = "2024.beta"
+license = "Apache 2.0"
+authors = ["Studio Mirai, LLC (dev@sm.xyz)"]
+
+[dependencies]
+
+[addresses]
+currency_treasury = "0x0"
