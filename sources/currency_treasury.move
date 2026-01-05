@@ -109,11 +109,12 @@ public fun destroy<Currency>(
     cap: CurrencyTreasuryAdminCap<Currency>,
 ): TreasuryCap<Currency> {
     let CurrencyTreasury { id, treasury_cap } = self;
-    id.delete();
 
     emit(CurrencyTreasuryDestroyedEvent<Currency> {
         treasury_id: id.to_inner(),
     });
+
+    id.delete();
 
     let CurrencyTreasuryAdminCap { id } = cap;
     id.delete();
