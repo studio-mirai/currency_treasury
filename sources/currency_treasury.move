@@ -7,15 +7,19 @@
 module currency_treasury::currency_treasury;
 
 use currency_treasury::burn_facility::{Self, BurnFacility};
-use currency_treasury::mint_facility::MintFacility;
+use currency_treasury::mint_facility::{Self, MintFacility};
+use std::type_name::{TypeName, with_defining_ids};
 use sui::coin::TreasuryCap;
 use sui::event::emit;
+use sui::table::{Self, Table};
+use sui::vec_set::{Self, VecSet};
 
 //=== Structs ===
 
 public struct CurrencyTreasury<phantom Currency> has key, store {
     id: UID,
     treasury_cap: TreasuryCap<Currency>,
+    mint_facilities: Table<TypeName, VecSet<ID>>,
 }
 
 public struct CurrencyTreasuryAdminCap<phantom Currency> has key, store {
@@ -44,6 +48,15 @@ public struct CurrencyBurnedEvent<phantom Currency> has copy, drop, store {
     value: u64,
 }
 
+//=== Constants ===
+
+const MAX_FACILITIES_PER_AUTHORITY: u64 = 500;
+
+//=== Errors ===
+
+const EMintFacilitiesNotEmpty: u64 = 0;
+const EMaxFacilitiesReached: u64 = 1;
+
 //=== Public Functions ===
 
 public fun new<Currency>(
@@ -53,6 +66,7 @@ public fun new<Currency>(
     let mut currency_treasury = CurrencyTreasury {
         id: object::new(ctx),
         treasury_cap: treasury_cap,
+        mint_facilities: table::new(ctx),
     };
 
     let currency_treasury_admin_cap = CurrencyTreasuryAdminCap {
@@ -66,6 +80,44 @@ public fun new<Currency>(
     });
 
     (currency_treasury, currency_treasury_admin_cap, burn_facility)
+}
+
+public fun new_mint_facility<Currency, Authority: drop>(
+    self: &mut CurrencyTreasury<Currency>,
+    _: &CurrencyTreasuryAdminCap<Currency>,
+    ctx: &mut TxContext,
+): MintFacility<Currency, Authority> {
+    let authority_type = with_defining_ids<Authority>();
+
+    let mint_facility = mint_facility::new<Currency, Authority>(ctx);
+
+    if (!self.mint_facilities.contains(authority_type)) {
+        self.mint_facilities.add(authority_type, vec_set::singleton(mint_facility.id()));
+    } else {
+        let mint_facilities = self.mint_facilities.borrow_mut(authority_type);
+        assert!(mint_facilities.length() < MAX_FACILITIES_PER_AUTHORITY, EMaxFacilitiesReached);
+        mint_facilities.insert(mint_facility.id());
+    };
+
+    mint_facility
+}
+
+public fun destroy_mint_facility<Currency, Authority: drop>(
+    self: &mut CurrencyTreasury<Currency>,
+    _: &CurrencyTreasuryAdminCap<Currency>,
+    mint_facility: MintFacility<Currency, Authority>,
+) {
+    // Destroy the mint
+    let (mint_facility_id, remaining_balance) = mint_facility.destroy();
+
+    // If there's a 
+    if (remaining_balance.value() > 0) {
+        self.treasury_cap.supply_mut().decrease_supply(remaining_balance);
+    } else {
+        remaining_balance.destroy_zero();
+    };
+
+    self.mint_facilities.borrow_mut(with_defining_ids<Authority>()).remove(&mint_facility_id);
 }
 
 public fun mint<Currency, Authority: drop>(
@@ -108,7 +160,10 @@ public fun destroy<Currency>(
     self: CurrencyTreasury<Currency>,
     cap: CurrencyTreasuryAdminCap<Currency>,
 ): TreasuryCap<Currency> {
-    let CurrencyTreasury { id, treasury_cap } = self;
+    assert!(self.mint_facilities.is_empty(), EMintFacilitiesNotEmpty);
+
+    let CurrencyTreasury { id, treasury_cap, mint_facilities } = self;
+    mint_facilities.destroy_empty();
 
     emit(CurrencyTreasuryDestroyedEvent<Currency> {
         treasury_id: id.to_inner(),

@@ -61,6 +61,14 @@ public(package) fun balance_mut<Currency>(
     &mut self.balance
 }
 
+public(package) fun withdraw<Currency>(
+    self: &mut BurnFacility<Currency>,
+    value: Option<u64>,
+): Balance<Currency> {
+    let value = value.destroy_or!(self.balance.value());
+    self.balance.split(value)
+}
+
 //=== Public View Functions ===
 
 public fun id<Currency>(self: &BurnFacility<Currency>): ID {

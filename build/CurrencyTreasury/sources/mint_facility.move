@@ -3,17 +3,21 @@
 
 module currency_treasury::mint_facility;
 
-use sui::balance::Balance;
+use sui::balance::{Self, Balance};
+use sui::derived_object::claim;
 use sui::event::emit;
 
 //=== Structs ===
 
 public struct MintFacility<phantom Currency, phantom Authority: drop> has key, store {
     id: UID,
+    number: u64,
     balance: Balance<Currency>,
     total_capacity: u64,
     refresh_epoch: u64,
 }
+
+public struct MintFacilityKey<phantom Authority: drop>(u64) has copy, drop, store;
 
 /// A transferable claim object that allows a user to redeem funds from the MintFacility
 /// at a future time. This reduces shared object congestion by decoupling the issuance
@@ -124,6 +128,19 @@ public fun withdraw<Currency, Authority: drop>(
 }
 
 //=== Package Functions ===
+
+public(package) fun new<Currency, Authority: drop>(
+    parent: &mut UID,
+    number: u64,
+): MintFacility<Currency, Authority> {
+    MintFacility {
+        id: claim(parent, MintFacilityKey<Authority>(number)),
+        number,
+        balance: balance::zero(),
+        total_capacity: 0,
+        refresh_epoch: 0,
+    }
+}
 
 public(package) fun deposit<Currency, Authority: drop>(
     self: &mut MintFacility<Currency, Authority>,

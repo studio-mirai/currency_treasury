@@ -3,7 +3,8 @@
 
 module currency_treasury::mint_facility;
 
-use sui::balance::Balance;
+use sui::balance::{Self, Balance};
+use sui::derived_object::{claim, exists};
 use sui::event::emit;
 
 //=== Structs ===
@@ -13,23 +14,6 @@ public struct MintFacility<phantom Currency, phantom Authority: drop> has key, s
     balance: Balance<Currency>,
     total_capacity: u64,
     refresh_epoch: u64,
-}
-
-/// A transferable claim object that allows a user to redeem funds from the MintFacility
-/// at a future time. This reduces shared object congestion by decoupling the issuance
-/// of withdrawal rights from the actual withdrawal transaction.
-///
-/// Flow:
-/// 1. Authority calls `new_mint_option()` - creates this object with only READ access to MintFacility
-/// 2. User holds the MintOption (transferable owned object)
-/// 3. User calls `redeem_mint_option()` - redeems when convenient (requires WRITE access)
-///
-/// This pattern prevents transaction congestion on `withdraw()` by allowing issuance
-/// of withdrawal rights without immediate shared object mutation. Users can redeem
-/// their options asynchronously, spreading out shared object write contention.
-public struct MintOption<phantom Currency, phantom Authority: drop> has key, store {
-    id: UID,
-    value: u64,
 }
 
 //=== Errors ===
@@ -56,57 +40,7 @@ public struct CurrencyWithdrawalEvent<
     value: u64,
 }
 
-public struct MintOptionIssuedEvent<
-    phantom Currency,
-    phantom Authority: drop,
-> has copy, drop, store {
-    facility_id: ID,
-    value: u64,
-}
-
-public struct MintOptionRedeemedEvent<
-    phantom Currency,
-    phantom Authority: drop,
-> has copy, drop, store {
-    facility_id: ID,
-    value: u64,
-}
-
 //=== Public Functions ===
-
-public fun new_mint_option<Currency, Authority: drop>(
-    self: &MintFacility<Currency, Authority>,
-    _: Authority,
-    value: u64,
-    ctx: &mut TxContext,
-): MintOption<Currency, Authority> {
-    emit(MintOptionIssuedEvent<Currency, Authority> {
-        facility_id: self.id(),
-        value,
-    });
-
-    MintOption {
-        id: object::new(ctx),
-        value,
-    }
-}
-
-public fun redeem_mint_option<Currency, Authority: drop>(
-    self: &mut MintFacility<Currency, Authority>,
-    mint_option: MintOption<Currency, Authority>,
-): Balance<Currency> {
-    assert!(self.balance.value() >= mint_option.value, EInsufficientBalance);
-
-    let MintOption { id, value } = mint_option;
-    id.delete();
-
-    emit(MintOptionRedeemedEvent<Currency, Authority> {
-        facility_id: self.id(),
-        value,
-    });
-
-    self.balance.split(value)
-}
 
 public fun withdraw<Currency, Authority: drop>(
     self: &mut MintFacility<Currency, Authority>,
@@ -124,6 +58,27 @@ public fun withdraw<Currency, Authority: drop>(
 }
 
 //=== Package Functions ===
+
+public(package) fun new<Currency, Authority: drop>(
+    ctx: &mut TxContext,
+): MintFacility<Currency, Authority> {
+    MintFacility {
+        id: object::new(ctx),
+        balance: balance::zero(),
+        total_capacity: 0,
+        refresh_epoch: 0,
+    }
+}
+
+public(package) fun destroy<Currency, Authority: drop>(
+    self: MintFacility<Currency, Authority>,
+): (ID, Balance<Currency>) {
+    let MintFacility { id, balance, .. } = self;
+    let mint_facility_id = id.to_inner();
+    id.delete();
+
+    (mint_facility_id, balance)
+}
 
 public(package) fun deposit<Currency, Authority: drop>(
     self: &mut MintFacility<Currency, Authority>,
